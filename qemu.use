@@ -1,0 +1,8 @@
+app-emulation/qemu -* static-user
+app-emulation/qemu PYTHON_TARGETS: python3_12
+app-emulation/qemu QEMU_SOFTMMU_TARGETS: -*
+app-emulation/qemu QEMU_USER_TARGETS: x86_64 aarch64 arm riscv32 riscv64 sparc
+
+sys-apps/busybox static -pam
+virtual/libcrypt static-libs
+sys-apps/libxcrypt static-libs
