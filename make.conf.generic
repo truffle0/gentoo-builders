@@ -1,0 +1,10 @@
+COMMON_FLAGS="-pipe -O2 -march=native"
+CFLAGS="${COMMON_FLAGS}"
+CXXFLAGS="${COMMON_FLAGS}"
+
+FEATURES="parallel-fetch parallel-install compress-index -ipc-sandbox -network-sandbox -pid-sandbox -news"
+PKGDIR="/var/cache/binpkgs"
+BINPKG_COMPRESS="xz"
+
+MAKEOPTS=""
+EMERGE_DEFAULT_OPTS="--quiet-build --buildpkg"

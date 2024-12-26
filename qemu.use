@@ -5,4 +5,7 @@ app-emulation/qemu QEMU_USER_TARGETS: x86_64 aarch64 arm riscv32 riscv64 sparc
 
 sys-apps/busybox static -pam
 virtual/libcrypt static-libs
-sys-apps/libxcrypt static-libs
+sys-libs/libxcrypt static-libs
+dev-libs/glib static-libs
+sys-libs/zlib static-libs
+dev-libs/libpcre2 static-libs
