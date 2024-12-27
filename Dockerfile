@@ -12,7 +12,7 @@ RUN apk --no-cache add ca-certificates gnupg tar wget xz
 
 ARG MIRROR="https://distfiles.gentoo.org"
 ARG STAGE="amd64-musl-llvm"
-# yes I like musl, fuck you
+# yes musl is the default, don't @ me :3
 ARG VERSION="latest"
 ARG SIGNING_KEY="BB572E0E2D182910"
 
@@ -90,17 +90,21 @@ FROM scratch AS stage3
 WORKDIR /
 COPY --from=fetcher /gentoo/ /
 
+SHELL [ "/bin/bash", "-c" ]
+CMD [ "/bin/bash" ]
+
 
 # Begin building a system from scratch using an existing BOOTSTRAP gentoo image
 ARG BOOTSTRAP
 FROM ${BOOTSTRAP:-stage3} AS builder
+WORKDIR /
 
 ARG PROFILE="default/linux/amd64/23.0/musl/llvm"
 
 RUN emerge-webrsync
 ADD make.conf.build /etc/portage/make.conf
 
-# Profile-based checks & setup
+# Profile compatibility checks & setup
 RUN <<-EOF
     die() { echo $1 ; exit 1 ; }
 
@@ -122,7 +126,7 @@ RUN <<-EOF
     fi
    
 	echo "PROFILE=${PROFILE}" >> build.txt
-	echo "PORTAGE_TIMESTAMP=$(cat /var/db/repos/gentoo/metadata/timestamp.chk)" >> /build.log
+	echo "PORTAGE_TIMESTAMP=$(cat /var/db/repos/gentoo/metadata/timestamp.chk)" >> /build.txt
 EOF
 
 RUN <<-EOF
@@ -139,8 +143,8 @@ RUN <<-EOF
     emerge -1 @system
 EOF
 
-# Move build log into the new image
-RUN "cp /build.log /gentoo/build.log"
+# Pass build log along
+RUN	cp build.txt /gentoo/build.txt
 
 
 # Generate final image, and complete build
@@ -152,6 +156,7 @@ COPY --from=builder /gentoo/ /
 
 COPY --from=builder /var/db/repos/gentoo /var/db/repos/gentoo
 COPY --from=builder /etc/portage/make.conf /etc/portage/make.conf
+ADD build.use /etc/portage/package.use
 
 # Complete world updates
 RUN <<-EOF
@@ -162,17 +167,22 @@ RUN <<-EOF
     export EMERGE_DEFAULT_OPTS="--jobs=$(expr `nproc` / 4)"
     export PORTAGE_LOGDIR="/var/log"
     
-    #emerge -uDU @world
-    emerge --depclean
-
-    emaint all
+    # first round of world updates (using temporary package.use)
+	emerge -uDU --with-bdeps=y @world
+	
+	# remove temporary use changes and rerun updates
+	rm /etc/portage/package.use
+	emerge -uDU --with-bdeps=y @world
 EOF
 
-# Final cleanup
+# cleanup and finalise
 RUN <<-EOF
+	emerge --depclean
+	emaint --all
+
     echo "Clearing distfiles..."
     rm -fr /var/cache/distfiles/*
-
+#
     echo "Clearing logs..."
     rm -fr /var/log/*
 
@@ -189,13 +199,54 @@ RUN <<-EOF
 	rm /etc/portage/make.conf
 EOF
 
+# put in a generic make.conf
 ADD make.conf.generic /etc/portage/make.conf
+
+# timestamp the build log
+RUN echo "BUILD_COMPLETED=$(date -uR)" >> build.txt
 
 SHELL ["/bin/bash", "-c"]
 CMD ["/bin/bash"]
 
 
+# Experiemental compressed version using upx
+FROM gentoo as tinytoo
+WORKDIR /
 
+COPY --from=builder /var/db/repos/gentoo /var/db/repos/gentoo
+
+# install UPX and add minimize script
+RUN emerge upx
+ADD minimize /usr/local/bin/minimize
+RUN ln -sr "/usr/local/bin/minimize" "/usr/local/bin/unminimize"
+
+# run the script (can be reversed at runtime by running 'unminimize')
+RUN minimize -c - | gzip -c - > checksums.txt.gz
+
+# Clean up
+RUN <<-EOF
+    echo "Clearing distfiles..."
+    rm -fr /var/cache/distfiles/*
+
+    echo "Clearing logs..."
+    rm -fr /var/log/*
+
+    echo "Clearing /var/tmp..."
+    rm -fr /var/tmp/*
+
+    echo "Clearing binpkgs..."
+    rm -fr /var/cache/binpkgs/*
+
+    echo "Clearing /var/db/repos..."
+    rm -fr /var/db/repos/*
+EOF
+
+SHELL ["/bin/bash", "-c"]
+CMD ["/bin/bash"]
+
+#
+### CROSS BUILDER 
+#
 FROM --platform=$BUILDPLATFORM gentoo AS crossbuilder
 ARG MIRROR="https://distfiles.gentoo.org"
 ARG CROSSARCH="aarch64"

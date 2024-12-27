@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# Defaults
+VERBOSE=false
+CHECKSUM_ONLY=false
+
+# Parse cmdline args
+OPTS="c:vn"
+while getopts $OPTS arg ; do
+	case $arg in
+		c)
+			CHECKSUM_FILE=${OPTARG}
+			;;
+		v)
+			VERBOSE=true
+			;;
+		n)
+			CHECKSUM_ONLY=true
+			;;
+	esac
+done
+
+# shift opts over so $1, etc. make sense
+shift $(($OPTIND - 1))
+
+[[ "$UID" != 0 ]] && echo "Not running as root! Limited to only writing/verifying checksums." >&2
+which upx &>/dev/null || (echo "Couldn't find upx in path! Aborting." >&2 ; exit 1)
+
+ELFS=( $(scanelf -R /usr | cut -d' ' -f 2 ) )
+echo -n "Found ${#ELFS[@]} ELF files under /usr" >&2
+
+# filter non-standard paths
+ELFS=( $(printf '%s\n' "${ELFS[@]}" | sed -nE '/^\/usr\/(local\/)?(bin|sbin|lib|lib64|libexec|\w+-\w+-\w+-\w+)/p') )
+echo " (${#ELFS[@]} after filtering)" >&2
+
+create_checksums() {
+	if [[ "$1" == "-" ]] ; then
+		echo "Writing checksums to stdout" >&2
+		exec 9>"/proc/self/fd/1"
+	elif [ -e "$1" ] ; then
+		echo "Tried to write checksums, but file '$1' already exists!" >&2
+		exit 1
+	else
+		echo "Writing checksums to '$1'" >&2
+		exec 9>"$1"
+	fi
+	
+	for elf in ${ELFS[@]} ; do
+		sha256sum $elf >&9
+	done
+
+	exec 9>&-
+}
+
+verify_checksums() {
+	if [[ "$1" == "-" ]] ; then
+		echo "Verifying checksums from stdout" >&2
+	else
+		echo "Verifying checksums from '$1'" >&2
+	fi
+
+	local VERIFY=( $(sha256sum --quiet --check "$1" 2>/dev/null) )
+	
+	# if verbose, print out stuff that fails
+	$VERBOSE && printf '%s\n' "${VERIFY[@]}"
+
+	if [[ "${#VERIFY[@]}" == 0 ]] ; then
+		echo "All files sucessfully verified!" >&2
+	else
+		echo "${#VERIFY[@]} out of ${#ELFS[@]} differ from original!" >&2
+		echo "Run 'sha256sum --quiet --check [checksum file]' to list files that fail."
+	fi
+}
+
+minimize() {
+	upx --lzma ${ELFS[@]} >&2
+}
+
+expand() {
+	upx --lzma -d ${ELFS[@]} >&2
+}
+
+
+NAME=$(basename $0)
+if [[ "$NAME" == "minimize" ]] ; then
+	[ -n "$CHECKSUM_FILE" ] && create_checksums $CHECKSUM_FILE
+	[ "$UID" == 0 ] && ! $CHECKSUM_ONLY && minimize $ELFS
+elif [[ "$NAME" == "unminimize" ]] ; then
+	[ "$UID" == 0 ] && expand $ELFS
+	[ -n "$CHECKSUM_FILE" ] && ! $CHECKSUM_ONLY && verify_checksums $CHECKSUM_FILE
+else
+	echo "Invalid command!"
+fi
